@@ -1,0 +1,451 @@
+
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+#wrap { display: flex; height: 580px; border: 0.5px solid var(--color-border-tertiary); border-radius: var(--border-radius-lg); overflow: hidden; background: var(--color-background-primary); }
+#sidebar { width: 200px; flex-shrink: 0; border-right: 0.5px solid var(--color-border-tertiary); display: flex; flex-direction: column; padding: 14px 12px; gap: 8px; background: var(--color-background-primary); }
+#canvas-wrap { flex: 1; position: relative; background: #f8fafc; }
+#cv { width: 100%; height: 100%; cursor: crosshair; display: block; }
+.s-label { font-size: 11px; font-weight: 500; color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 6px; }
+.op-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+.op-btn { padding: 7px 0; border-radius: var(--border-radius-md); border: 0.5px solid var(--color-border-secondary); background: var(--color-background-primary); color: var(--color-text-primary); font-size: 16px; cursor: pointer; transition: background 0.15s; }
+.op-btn:hover { background: var(--color-background-secondary); }
+.op-btn.selected { background: #3C3489; color: #EEEDFE; border-color: #3C3489; }
+.op-btn.eq-btn { grid-column: span 2; font-size: 14px; font-weight: 500; }
+.side-btn { width: 100%; padding: 7px; border-radius: var(--border-radius-md); border: 0.5px solid var(--color-border-secondary); background: var(--color-background-primary); color: var(--color-text-primary); font-size: 12px; cursor: pointer; transition: background 0.15s; text-align: center; }
+.side-btn:hover { background: var(--color-background-secondary); }
+.side-btn.danger { color: #A32D2D; border-color: #F7C1C1; }
+#mode-indicator { font-size: 11px; color: var(--color-text-secondary); padding: 5px 8px; background: var(--color-background-secondary); border-radius: var(--border-radius-md); text-align: center; }
+#node-editor { display: none; padding: 8px; background: var(--color-background-secondary); border-radius: var(--border-radius-md); border: 0.5px solid var(--color-border-tertiary); }
+#node-editor input { width: 100%; padding: 5px 8px; border-radius: 5px; border: 0.5px solid var(--color-border-secondary); background: var(--color-background-primary); color: var(--color-text-primary); font-size: 14px; text-align: center; margin-top: 4px; }
+#err-banner { display: none; font-size: 11px; padding: 5px 8px; border-radius: var(--border-radius-md); background: var(--color-background-danger); color: var(--color-text-danger); text-align: center; }
+</style>
+
+<h2 style="position:absolute;width:1px;height:1px;overflow:hidden">Math expression graph — place nodes, draw edges with operators</h2>
+
+<div id="wrap">
+  <div id="sidebar">
+    <div class="s-label">Mode</div>
+    <div id="mode-indicator">Click canvas to add node</div>
+
+    <div class="s-label">Operator for next edge</div>
+    <div class="op-grid">
+      <button class="op-btn selected" id="op-+" onclick="selectOp('+')">+</button>
+      <button class="op-btn" id="op--" onclick="selectOp('-')">−</button>
+      <button class="op-btn" id="op-*" onclick="selectOp('*')">×</button>
+      <button class="op-btn" id="op-/" onclick="selectOp('/')">÷</button>
+      <button class="op-btn eq-btn" id="op-=" onclick="selectOp('=')">=&nbsp;&nbsp;(result node)</button>
+    </div>
+
+    <div class="s-label">Selected node</div>
+    <div id="node-editor">
+      <div style="font-size:11px;color:var(--color-text-secondary)" id="ne-label">Value</div>
+      <input type="number" id="ne-val" placeholder="0" oninput="updateNodeVal()" />
+    </div>
+
+    <div class="s-label">Actions</div>
+    <button class="side-btn" onclick="clearAll()">Clear all</button>
+    <button class="side-btn danger" onclick="deleteSelected()">Delete selected</button>
+    <div id="err-banner"></div>
+<div class="s-label">File</div>
+<button class="side-btn" onclick="exportJSON()">Export JSON</button>
+<button class="side-btn" onclick="importJSON()">Import JSON</button>
+
+
+    <div style="margin-top:auto;font-size:10px;color:var(--color-text-secondary);line-height:1.6">
+      Click canvas: add node<br>
+      Shift+drag node→node: edge<br>
+      Click node/edge: select<br>
+      Edge length = calc order
+    </div>
+  </div>
+  <div id="canvas-wrap">
+    <canvas id="cv"></canvas>
+  </div>
+</div>
+
+<script>
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const wrap = document.getElementById('canvas-wrap');
+
+let nodes = [], edges = [];
+let selectedOp = '+';
+let selectedNode = null, selectedEdge = null;
+let dragging = null, dragOffX = 0, dragOffY = 0;
+let edgeDrag = null;
+let idSeq = 0;
+let mouseX = 0, mouseY = 0;
+
+function uid() { return 'n' + (++idSeq); }
+
+function selectOp(op) {
+  selectedOp = op;
+  document.querySelectorAll('.op-btn').forEach(b => b.classList.remove('selected'));
+  document.getElementById('op-' + op).classList.add('selected');
+}
+
+function resize() { cv.width = wrap.clientWidth; cv.height = wrap.clientHeight; draw(); }
+
+function nodeAt(x, y) {
+  for (let i = nodes.length - 1; i >= 0; i--) {
+    const n = nodes[i];
+    if (Math.hypot(x - n.x, y - n.y) <= n.r) return n;
+  }
+  return null;
+}
+
+function edgeAt(x, y) {
+  for (let i = edges.length - 1; i >= 0; i--) {
+    const e = edges[i];
+    const s = getNode(e.src), t = getNode(e.tgt);
+    if (!s || !t) continue;
+    if (Math.hypot(x - (s.x + t.x) / 2, y - (s.y + t.y) / 2) <= 14) return e;
+  }
+  return null;
+}
+
+function getNode(id) { return nodes.find(n => n.id === id); }
+
+function edgeLength(e) {
+  const s = getNode(e.src), t = getNode(e.tgt);
+  if (!s || !t) return 0;
+  return Math.hypot(t.x - s.x, t.y - s.y);
+}
+
+function addNode(x, y) {
+  nodes.push({ id: uid(), x, y, r: 26, val: null, isResult: false, resultVal: null, err: false });
+  compute(); draw();
+}
+
+function setMode(txt) { document.getElementById('mode-indicator').textContent = txt; }
+
+function showNodeEditor(n) {
+  const ed = document.getElementById('node-editor');
+  ed.style.display = 'block';
+  document.getElementById('ne-label').textContent = n.isResult ? 'Result (auto)' : 'Value';
+  const inp = document.getElementById('ne-val');
+  inp.disabled = n.isResult;
+  inp.value = n.isResult
+    ? (n.resultVal !== null ? +n.resultVal.toFixed(6) : '')
+    : (n.val !== null ? n.val : '');
+}
+
+function hideNodeEditor() { document.getElementById('node-editor').style.display = 'none'; }
+
+function updateNodeVal() {
+  if (!selectedNode || selectedNode.isResult) return;
+  const v = document.getElementById('ne-val').value;
+  selectedNode.val = v === '' ? null : parseFloat(v);
+  compute(); draw();
+}
+
+function select(n, e) {
+  selectedNode = n || null;
+  selectedEdge = e || null;
+  if (n) { showNodeEditor(n); setMode('Node selected'); }
+  else hideNodeEditor();
+  if (e) setMode('Edge: ' + (e.op === '*' ? '×' : e.op === '/' ? '÷' : e.op));
+  if (!n && !e) setMode('Click canvas to add node');
+  draw();
+}
+
+function deleteSelected() {
+  if (selectedNode) {
+    edges = edges.filter(e => e.src !== selectedNode.id && e.tgt !== selectedNode.id);
+    nodes = nodes.filter(n => n !== selectedNode);
+    select(null, null);
+  } else if (selectedEdge) {
+    edges = edges.filter(e => e !== selectedEdge);
+    select(null, null);
+  }
+  compute(); draw();
+}
+
+function clearAll() { nodes = []; edges = []; select(null, null); compute(); draw(); }
+
+function showErr(msg) {
+  const b = document.getElementById('err-banner');
+  b.style.display = msg ? 'block' : 'none';
+  b.textContent = msg;
+}
+
+function getEffectiveVal(n) {
+  if (!n) return 0;
+  if (n.isResult) return n.resultVal !== null ? n.resultVal : 0;
+  if (n.intermediateVal !== null && n.intermediateVal !== undefined) return n.intermediateVal;
+  return n.val !== null ? n.val : 0;
+}
+
+function compute() {
+  let errMsg = '';
+
+  nodes.forEach(n => { n.isResult = false; n.resultVal = null; n.err = false; });
+
+  const getIncoming = id => edges.filter(e => e.tgt === id);
+
+  const visited = new Set(), topoOrder = [];
+  function visit(id) {
+    if (visited.has(id)) return;
+    visited.add(id);
+    getIncoming(id).forEach(e => visit(e.src));
+    topoOrder.push(id);
+  }
+  nodes.forEach(n => visit(n.id));
+
+topoOrder.forEach(nid => {
+  const n = getNode(nid);
+  if (!n) return;
+  const incoming = getIncoming(nid);
+  if (incoming.length === 0) return;
+
+  const eqEdges = incoming.filter(e => e.op === '=');
+  const opEdges = incoming.filter(e => e.op !== '=');
+
+  if (eqEdges.length > 1) { n.err = true; errMsg = 'Multiple = edges into one node'; return; }
+
+  const lengths = opEdges.map(e => edgeLength(e));
+  for (let i = 0; i < lengths.length; i++)
+    for (let j = i+1; j < lengths.length; j++)
+      if (Math.abs(lengths[i] - lengths[j]) < 2) {
+        n.err = true; errMsg = 'Two edges have equal length — ambiguous order'; return;
+      }
+
+const sorted = [...opEdges].sort((a, b) => edgeLength(a) - edgeLength(b));
+
+// Determine starting value
+let acc;
+if (eqEdges.length === 1) {
+  const esrc = getNode(eqEdges[0].src);
+  if (!esrc) return;
+  acc = getEffectiveVal(esrc);  // start from = source
+} else {
+  acc = n.val !== null ? n.val : 0;  // start from node's own value
+}
+
+// Apply op-edges once, on top of whichever starting value
+for (const e of sorted) {
+  const v = getEffectiveVal(getNode(e.src));
+  if (e.op === '+') acc += v;
+  else if (e.op === '-') acc -= v;
+  else if (e.op === '*') acc *= v;
+  else if (e.op === '/') {
+    if (v === 0) { n.err = true; errMsg = 'Division by zero'; return; }
+    acc /= v;
+  }
+}
+
+if (eqEdges.length === 1) {
+  n.isResult = true;
+  n.resultVal = acc;
+} else {
+  n.intermediateVal = acc;
+}
+});
+
+  if (selectedNode) {
+    const inp = document.getElementById('ne-val');
+    if (selectedNode.isResult) {
+      inp.disabled = true;
+      inp.value = selectedNode.resultVal !== null ? +selectedNode.resultVal.toFixed(6) : '';
+    } else {
+      inp.disabled = false;
+    }
+  }
+  showErr(errMsg);
+}
+
+function displayLabel(n) {
+  if (n.err) return 'ERR';
+  if (n.isResult) return n.resultVal !== null ? +n.resultVal.toFixed(4) + '' : '?';
+  return n.val !== null ? n.val + '' : '?';
+}
+
+function draw() {
+  const W = cv.width, H = cv.height;
+  ctx.clearRect(0, 0, W, H);
+
+  ctx.strokeStyle = '#e2e8f0'; ctx.lineWidth = 1;
+  for (let x = 0; x < W; x += 30) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
+  for (let y = 0; y < H; y += 30) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+
+  edges.forEach(e => drawEdge(e));
+
+  if (edgeDrag) {
+    const src = getNode(edgeDrag.src);
+    if (src) {
+      ctx.save();
+      ctx.strokeStyle = '#7F77DD'; ctx.lineWidth = 2; ctx.setLineDash([6,4]);
+      ctx.beginPath(); ctx.moveTo(src.x, src.y); ctx.lineTo(mouseX, mouseY); ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  nodes.forEach(n => drawNode(n));
+}
+
+function drawEdge(e) {
+  const src = getNode(e.src), tgt = getNode(e.tgt);
+  if (!src || !tgt) return;
+  const dx = tgt.x - src.x, dy = tgt.y - src.y, dist = Math.hypot(dx, dy);
+  if (dist < 1) return;
+  const ux = dx/dist, uy = dy/dist;
+  const sx = src.x + ux*src.r, sy = src.y + uy*src.r;
+  const ex = tgt.x - ux*tgt.r, ey = tgt.y - uy*tgt.r;
+  const isSel = e === selectedEdge, isEq = e.op === '=';
+
+  ctx.save();
+  ctx.strokeStyle = isSel ? '#534AB7' : (isEq ? '#1D9E75' : '#94a3b8');
+  ctx.lineWidth = isSel ? 2.5 : 1.5;
+  if (isEq) ctx.setLineDash([6,4]);
+  ctx.beginPath(); ctx.moveTo(sx,sy); ctx.lineTo(ex,ey); ctx.stroke();
+  ctx.setLineDash([]);
+
+  const angle = Math.atan2(ey-sy, ex-sx);
+  ctx.fillStyle = isSel ? '#534AB7' : (isEq ? '#1D9E75' : '#94a3b8');
+  ctx.beginPath();
+  ctx.moveTo(ex, ey);
+  ctx.lineTo(ex - 10*Math.cos(angle-0.3), ey - 10*Math.sin(angle-0.3));
+  ctx.lineTo(ex - 10*Math.cos(angle+0.3), ey - 10*Math.sin(angle+0.3));
+  ctx.closePath(); ctx.fill();
+
+  const mx = (sx+ex)/2, my = (sy+ey)/2;
+  const lbl = e.op === '*' ? '×' : e.op === '/' ? '÷' : e.op;
+  ctx.fillStyle = isEq ? '#E1F5EE' : (isSel ? '#EEEDFE' : 'rgba(248,250,252,0.92)');
+  ctx.fillRect(mx-10, my-10, 20, 20);
+  ctx.fillStyle = isSel ? '#3C3489' : (isEq ? '#0F6E56' : '#475569');
+  ctx.font = 'bold 13px sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(lbl, mx, my);
+  ctx.restore();
+}
+
+function drawNode(n) {
+  const isSel = n === selectedNode;
+  ctx.save();
+  ctx.beginPath(); ctx.arc(n.x, n.y, n.r, 0, Math.PI*2);
+  ctx.fillStyle = n.err ? '#FCEBEB' : (n.isResult ? '#E1F5EE' : (isSel ? '#EEEDFE' : '#ffffff'));
+  ctx.fill();
+  ctx.strokeStyle = n.err ? '#E24B4A' : (n.isResult ? '#1D9E75' : (isSel ? '#534AB7' : '#cbd5e1'));
+  ctx.lineWidth = isSel ? 2.5 : 1.5;
+  ctx.stroke();
+  ctx.fillStyle = n.err ? '#A32D2D' : (n.isResult ? '#085041' : (isSel ? '#26215C' : '#1e293b'));
+  ctx.font = '500 13px sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  const lbl = displayLabel(n);
+  ctx.fillText(lbl.length > 6 ? lbl.slice(0,6)+'…' : lbl, n.x, n.y);
+  ctx.restore();
+}
+
+function exportJSON() {
+  const data = {
+    nodes: nodes.map(n => ({
+      id: n.id, x: n.x, y: n.y, val: n.val
+    })),
+    edges: edges.map(e => ({
+      src: e.src, tgt: e.tgt, op: e.op
+    }))
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'math-map.json';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function importJSON() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.json';
+  input.onchange = e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        const data = JSON.parse(ev.target.result);
+        if (!data.nodes || !data.edges) throw new Error('Invalid format');
+        nodes = data.nodes.map(n => ({
+          ...n, r: 26, isResult: false, resultVal: null,
+          intermediateVal: null, err: false
+        }));
+        edges = data.edges;
+        idSeq = Math.max(0, ...nodes.map(n => parseInt(n.id.slice(1)) || 0));
+        select(null, null);
+        compute();
+        draw();
+      } catch {
+        showErr('Invalid JSON file');
+        setTimeout(() => showErr(''), 2500);
+      }
+    };
+    reader.readAsText(file);
+  };
+  input.click();
+}
+
+
+cv.addEventListener('mousedown', e => {
+  const rect = cv.getBoundingClientRect();
+  const x = e.clientX - rect.left, y = e.clientY - rect.top;
+  const hit = nodeAt(x, y);
+  const hitEdge = !hit ? edgeAt(x, y) : null;
+  if (hit) {
+    if (e.shiftKey || e.altKey) { edgeDrag = { src: hit.id }; select(null, null); }
+    else { dragging = hit; dragOffX = x - hit.x; dragOffY = y - hit.y; select(hit, null); }
+  } else if (hitEdge) {
+    select(null, hitEdge);
+  } else {
+    addNode(x, y); select(null, null);
+  }
+});
+
+cv.addEventListener('mousemove', e => {
+  const rect = cv.getBoundingClientRect();
+  mouseX = e.clientX - rect.left; mouseY = e.clientY - rect.top;
+  if (dragging) {
+    dragging.x = mouseX - dragOffX; dragging.y = mouseY - dragOffY;
+    compute(); draw();
+  } else if (edgeDrag) { draw(); }
+});
+
+cv.addEventListener('mouseup', e => {
+  const rect = cv.getBoundingClientRect();
+  const x = e.clientX - rect.left, y = e.clientY - rect.top;
+  if (edgeDrag) {
+    const tgt = nodeAt(x, y);
+    if (tgt && tgt.id !== edgeDrag.src) {
+      const alreadyExists = edges.find(ed => ed.src === edgeDrag.src && ed.tgt === tgt.id);
+      const hasIncomingEq = edges.some(ed => ed.tgt === tgt.id && ed.op === '=');
+      const hasOtherIncoming = edges.some(ed => ed.tgt === tgt.id);
+
+      if (!alreadyExists) {
+        if (hasIncomingEq) {
+          showErr('This node already has a = edge — no other incoming edges allowed');
+          setTimeout(() => showErr(''), 2500);
+        } else if (selectedOp === '=' && hasOtherIncoming) {
+          showErr('Cannot add = edge — this node already has incoming edges');
+          setTimeout(() => showErr(''), 2500);
+        } else {
+          edges.push({ src: edgeDrag.src, tgt: tgt.id, op: selectedOp });
+          compute(); draw();
+        }
+      }
+    }
+    edgeDrag = null; draw();
+  }
+  if (dragging) { dragging = null; compute(); draw(); }
+});
+window.addEventListener('keydown', e => {
+  if (['INPUT','TEXTAREA'].includes(document.activeElement.tagName)) return;
+  if (e.key === 'Delete' || e.key === 'Backspace') deleteSelected();
+});
+
+window.addEventListener('resize', resize);
+resize();
+</script>
+
+
+
+
