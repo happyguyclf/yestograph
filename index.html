@@ -132,12 +132,32 @@
         <p>Visualize prescriptive workflows and decision models.</p>
       </div>
  
+<button class="tool-card" onclick="toggleExpmapPopup()" style="cursor: pointer;">
+        <h3 style="color: #0b5394;">Experimental Maps</h3>
+        <p>Different types of maps that provide experimental functions.</p>
+      </a>
+    </div>
+
+<div id="expmap-popup" style="
+    display: none;  position: fixed; top: 50%;  left: 50%;  transform: translate(-50%, -50%);
+    width: 90%;  max-width: 650px; max-height: 85vh;
+    background: white;   border: 1px solid #ddd;  border-radius: 12px;
+    padding: 25px;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+    z-index: 9999;    font-family: sans-serif;  overflow-y: auto;">
+  <div style="margin-bottom: 10px; display: flex; justify-content: space-between; align-items: center; ">
+  <h3 style="margin-top:0; color: #1a1a1a;">Experimental Maps</h3>  
+    </div>
+    <div class="tools-grid">
 <a href="./zephottsa/" class="tool-card">
         <h3 style="color: #93510b;">Zephottsa’s Maths (Beta)</h3>
         <p>The experimental reconstruction of the mathematical calculation system of the ethic Zephottsa.</p>
       </a>
     </div>
-
+  <div style="margin-top: 15px; display: flex; justify-content: center; align-items: center;">
+        <button onclick="document.getElementById('expmap-popup').style.display='none'" style="width: auto; background: #f3f4f6; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px;">Close</button>        
+    </div>
+</div>
     <footer>
       <p>© 2026 Yestograph, by HappyGuy119. Built with privacy-first local storage.</p>
     </footer>
@@ -151,6 +171,17 @@
         .catch(err => console.error('Registration failed:', err));
     });
   }
+function toggleExpmapPopup() {
+    const popup = document.getElementById('expmap-popup');
+    if (popup.style.display === 'none' || popup.style.display === '') {
+        popup.style.display = 'block';
+        setTimeout(() => {
+            window.addEventListener('click', closePopupOnClickOutside);
+        }, 10);
+    } else {
+        popup.style.display = 'none';
+    }}
+
 </script>
 
 </body>
